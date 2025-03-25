@@ -152,9 +152,9 @@ def main():
 
     CONFIG = {
         "model": "ResNet18",   # Change name when using a different model
-        "batch_size": 512, # m1 pro: 512
-        "learning_rate": 0.01,
-        "epochs": 5,  # Train for longer in a real scenario
+        "batch_size": 512, # m1 pro: 512, cuda: 512
+        "learning_rate": 0.001,
+        "epochs": 20,  # Train for longer in a real scenario
         "num_workers": 4, # Adjust based on your system
         "device": "mps" if torch.backends.mps.is_available() else "cuda" if torch.cuda.is_available() else "cpu",
         "data_dir": "./data",  # Make sure this directory exists
@@ -172,8 +172,10 @@ def main():
     ############################################################################
 
     transform_train = transforms.Compose([
+        transforms.RandomCrop(32, padding=4),
+        transforms.RandomHorizontalFlip(),
         transforms.ToTensor(),
-        transforms.Normalize((0.5071, 0.4867, 0.4408), (0.2675, 0.2565, 0.2761)), # standard CIFAR-100 normalization values
+        transforms.Normalize((0.5071, 0.4867, 0.4408), (0.2675, 0.2565, 0.2761)),
     ])
 
     ###############
@@ -182,8 +184,10 @@ def main():
 
     # Validation and test transforms (NO augmentation)
     transform_test = transforms.Compose([
+        transforms.RandomCrop(32, padding=4),
+        transforms.RandomHorizontalFlip(),
         transforms.ToTensor(),
-        transforms.Normalize((0.5071, 0.4867, 0.4408), (0.2675, 0.2565, 0.2761))
+        transforms.Normalize((0.5071, 0.4867, 0.4408), (0.2675, 0.2565, 0.2761)),
     ])
 
 
@@ -243,7 +247,7 @@ def main():
     # Loss Function, Optimizer and optional learning rate scheduler
     ############################################################################
     criterion = torch.nn.CrossEntropyLoss()
-    optimizer = torch.optim.SGD(model.parameters(), lr=CONFIG["learning_rate"], momentum=0.9, weight_decay=5e-4)
+    optimizer = torch.optim.Adam(model.parameters(), lr=CONFIG["learning_rate"], weight_decay=5e-4)
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=1, gamma=0.9)
 
 
