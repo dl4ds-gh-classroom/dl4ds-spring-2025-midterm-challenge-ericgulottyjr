@@ -75,6 +75,8 @@ def train(epoch, model, trainloader, optimizer, criterion, CONFIG):
         # move inputs and labels to the target device
         inputs, labels = inputs.to(device), labels.to(device)
 
+        inputs, targets_a, targets_b, lam = mixup_data(inputs, labels, alpha=0.2)
+
         # Zero the parameter gradients
         optimizer.zero_grad()
 
@@ -82,7 +84,7 @@ def train(epoch, model, trainloader, optimizer, criterion, CONFIG):
         outputs = model(inputs)
 
         # Compute the loss
-        loss = criterion(outputs, labels)
+        loss = lam * criterion(outputs, targets_a) + (1 - lam) * criterion(outputs, targets_b)
 
         # Backward pass: compute gradient of the loss with respect to model parameters
         loss.backward()
@@ -139,6 +141,17 @@ def validate(model, valloader, criterion, device):
     val_acc = 100. * correct / total
     return val_loss, val_acc
 
+# Add a function that mixes up data
+def mixup_data(x, y, alpha=1.0):
+    if alpha > 0:
+        lam = np.random.beta(alpha, alpha)
+    else:
+        lam = 1
+    batch_size = x.size()[0]
+    index = torch.randperm(batch_size).to(x.device)
+    mixed_x = lam * x + (1 - lam) * x[index, :]
+    y_a, y_b = y, y[index]
+    return mixed_x, y_a, y_b, lam
 
 def main():
 
@@ -154,7 +167,7 @@ def main():
         "model": "ResNet18",   # Change name when using a different model
         "batch_size": 512, # m1 pro: 512, cuda: 512
         "learning_rate": 0.001,
-        "epochs": 40,  # Train for longer in a real scenario
+        "epochs": 20,  # Train for longer in a real scenario
         "num_workers": 4, # Adjust based on your system
         "device": "mps" if torch.backends.mps.is_available() else "cuda" if torch.cuda.is_available() else "cpu",
         "data_dir": "./data",  # Make sure this directory exists
