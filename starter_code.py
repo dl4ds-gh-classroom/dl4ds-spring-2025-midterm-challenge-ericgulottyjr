@@ -21,13 +21,37 @@ import json
 class SimpleCNN(nn.Module):
     def __init__(self):
         super(SimpleCNN, self).__init__()
-        # TODO - define the layers of the network you will use
-        ...
+        self.features = nn.Sequential(
+            # Block 1
+            nn.Conv2d(in_channels=3, out_channels=32, kernel_size=3, padding=1),
+            nn.BatchNorm2d(32),
+            nn.ReLU(inplace=True),
+            nn.MaxPool2d(kernel_size=2, stride=2),
+            
+            # Block 2
+            nn.Conv2d(in_channels=32, out_channels=64, kernel_size=3, padding=1),
+            nn.BatchNorm2d(64),
+            nn.ReLU(inplace=True),
+            nn.MaxPool2d(kernel_size=2, stride=2),
+            
+            # Block 3
+            nn.Conv2d(in_channels=64, out_channels=128, kernel_size=3, padding=1),
+            nn.BatchNorm2d(128),
+            nn.ReLU(inplace=True),
+            nn.MaxPool2d(kernel_size=2, stride=2)
+        )
+
+        self.classifier = nn.Sequential(
+            nn.Dropout(0.5),
+            nn.Linear(128 * 4 * 4, 256),
+            nn.ReLU(inplace=True),
+            nn.Linear(256, 100)  # 100 output classes for CIFAR-100
+        )
     
     def forward(self, x):
-        # TODO - define the forward pass of the network you will use
-        ...
-
+        x = self.features(x)
+        x = x.view(x.size(0), -1)  # Flatten the tensor
+        x = self.classifier(x)
         return x
 
 ################################################################################
@@ -50,11 +74,23 @@ def train(epoch, model, trainloader, optimizer, criterion, CONFIG):
         # move inputs and labels to the target device
         inputs, labels = inputs.to(device), labels.to(device)
 
-        ### TODO - Your code here
-        ...
+        # Zero the parameter gradients
+        optimizer.zero_grad()
 
-        running_loss += ...   ### TODO
-        _, predicted = ...    ### TODO
+        # Forward pass: compute predicted outputs by passing inputs to the model
+        outputs = model(inputs)
+
+        # Compute the loss
+        loss = criterion(outputs, labels)
+
+        # Backward pass: compute gradient of the loss with respect to model parameters
+        loss.backward()
+
+        # Perform a single optimization step (parameter update)
+        optimizer.step()
+
+        running_loss += loss.item()
+        _, predicted = outputs.max(1)
 
         total += labels.size(0)
         correct += predicted.eq(labels).sum().item()
@@ -87,11 +123,11 @@ def validate(model, valloader, criterion, device):
             # move inputs and labels to the target device
             inputs, labels = inputs.to(device), labels.to(device)
 
-            outputs = ... ### TODO -- inference
-            loss = ...    ### TODO -- loss calculation
+            outputs = model(inputs)
+            loss = criterion(outputs,labels)
 
-            running_loss += ...  ### SOLUTION -- add loss from this sample
-            _, predicted = ...   ### SOLUTION -- predict the class
+            running_loss += loss.item()
+            _, predicted = outputs.max(1)
 
             total += labels.size(0)
             correct += predicted.eq(labels).sum().item()
@@ -115,9 +151,9 @@ def main():
 
     CONFIG = {
         "model": "MyModel",   # Change name when using a different model
-        "batch_size": 8, # run batch size finder to find optimal batch size
-        "learning_rate": 0.1,
-        "epochs": 5,  # Train for longer in a real scenario
+        "batch_size": 512, # m1 pro: 512
+        "learning_rate": 0.001,
+        "epochs": 20,  # Train for longer in a real scenario
         "num_workers": 4, # Adjust based on your system
         "device": "mps" if torch.backends.mps.is_available() else "cuda" if torch.cuda.is_available() else "cpu",
         "data_dir": "./data",  # Make sure this directory exists
@@ -136,7 +172,7 @@ def main():
 
     transform_train = transforms.Compose([
         transforms.ToTensor(),
-        transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)), # Example normalization
+        transforms.Normalize((0.5071, 0.4867, 0.4408), (0.2675, 0.2565, 0.2761)), # standard CIFAR-100 normalization values
     ])
 
     ###############
@@ -144,7 +180,11 @@ def main():
     ###############
 
     # Validation and test transforms (NO augmentation)
-    transform_test = ...   ### TODO -- BEGIN SOLUTION
+    transform_test = transforms.Compose([
+        transforms.ToTensor(),
+        transforms.Normalize((0.5071, 0.4867, 0.4408), (0.2675, 0.2565, 0.2761))
+    ])
+
 
     ############################################################################
     #       Data Loading
@@ -154,22 +194,26 @@ def main():
                                             download=True, transform=transform_train)
 
     # Split train into train and validation (80/20 split)
-    train_size = ...   ### TODO -- Calculate training set size
-    val_size = ...     ### TODO -- Calculate validation set size
-    trainset, valset = ...  ### TODO -- split into training and validation sets
+    train_size = int(0.8 * len(trainset))
+    val_size = len(trainset) - train_size
+    trainset, valset = torch.utils.data.random_split(trainset, [train_size, val_size])
 
-    ### TODO -- define loaders and test set
-    trainloader = ...
-    valloader = ...
+    # Create data loaders for training and validation
+    trainloader = torch.utils.data.DataLoader(trainset, batch_size=CONFIG["batch_size"], 
+                                            shuffle=True, num_workers=CONFIG["num_workers"])
+    valloader = torch.utils.data.DataLoader(valset, batch_size=CONFIG["batch_size"], 
+                                            shuffle=False, num_workers=CONFIG["num_workers"])
 
-    # ... (Create validation and test loaders)
-    testset = ...
-    testloader = ...
-    
+    # Load CIFAR-100 test set with test transforms (no augmentation)
+    testset = torchvision.datasets.CIFAR100(root=CONFIG["data_dir"], train=False,
+                                            download=True, transform=transform_test)
+    testloader = torch.utils.data.DataLoader(testset, batch_size=CONFIG["batch_size"],
+                                            shuffle=False, num_workers=CONFIG["num_workers"])
+
     ############################################################################
     #   Instantiate model and move to target device
     ############################################################################
-    model = ...   # instantiate your model ### TODO
+    model = SimpleCNN()   # instantiate your model
     model = model.to(CONFIG["device"])   # move it to target device
 
     print("\nModel summary:")
@@ -190,9 +234,9 @@ def main():
     ############################################################################
     # Loss Function, Optimizer and optional learning rate scheduler
     ############################################################################
-    criterion = ...   ### TODO -- define loss criterion
-    optimizer = ...   ### TODO -- define optimizer
-    scheduler = ...  # Add a scheduler   ### TODO -- you can optionally add a LR scheduler
+    criterion = torch.nn.CrossEntropyLoss()
+    optimizer = optimizer = torch.optim.Adam(model.parameters(), lr=CONFIG["learning_rate"], weight_decay=5e-4)
+    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=1, gamma=0.9)
 
 
     # Initialize wandb
