@@ -184,10 +184,8 @@ def main():
 
     # Validation and test transforms (NO augmentation)
     transform_test = transforms.Compose([
-        transforms.RandomCrop(32, padding=4),
-        transforms.RandomHorizontalFlip(),
         transforms.ToTensor(),
-        transforms.Normalize((0.5071, 0.4867, 0.4408), (0.2675, 0.2565, 0.2761)),
+        transforms.Normalize((0.5071, 0.4867, 0.4408), (0.2675, 0.2565, 0.2761))
     ])
 
 
@@ -225,7 +223,11 @@ def main():
     model.maxpool = nn.Identity()
 
     num_ftrs = model.fc.in_features
-    model.fc = nn.Linear(num_ftrs, 100)  # 100 output classes for CIFAR-100
+    model.fc = nn.Sequential(
+        nn.Dropout(0.5), 
+        nn.Linear(num_ftrs, 100)
+    )
+
     model = model.to(CONFIG["device"])
 
     print("\nModel summary:")
@@ -246,9 +248,9 @@ def main():
     ############################################################################
     # Loss Function, Optimizer and optional learning rate scheduler
     ############################################################################
-    criterion = torch.nn.CrossEntropyLoss()
+    criterion = criterion = nn.CrossEntropyLoss(label_smoothing=0.1)
     optimizer = torch.optim.Adam(model.parameters(), lr=CONFIG["learning_rate"], weight_decay=5e-4)
-    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=1, gamma=0.9)
+    scheduler = scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=CONFIG["epochs"])
 
 
     # Initialize wandb
