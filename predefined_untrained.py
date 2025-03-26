@@ -167,7 +167,7 @@ def main():
         "model": "ResNet18",   # Change name when using a different model
         "batch_size": 512, # m1 pro: 512, cuda: 512
         "learning_rate": 0.001,
-        "epochs": 20,  # Train for longer in a real scenario
+        "epochs": 40,  # Train for longer in a real scenario
         "num_workers": 4, # Adjust based on your system
         "device": "mps" if torch.backends.mps.is_available() else "cuda" if torch.cuda.is_available() else "cpu",
         "data_dir": "./data",  # Make sure this directory exists
