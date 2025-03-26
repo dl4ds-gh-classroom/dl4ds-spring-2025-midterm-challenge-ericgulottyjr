@@ -45,8 +45,8 @@ def evaluate_ood(model, distortion_name, severity, CONFIG):
             # Apply correct normalization:
             normalize = transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
             inputs = normalize(inputs)
-            #print("Input shape after transform:", inputs.shape)  # Debug log
-            tqdm.write(f"Input shape after transform: {inputs.shape}")
+            # print("Input shape after transform:", inputs.shape)  # Debug log
+            # tqdm.write(f"Input shape after transform: {inputs.shape}") # Alt Debug
             inputs = inputs.to(device)
 
             outputs = model(inputs)
