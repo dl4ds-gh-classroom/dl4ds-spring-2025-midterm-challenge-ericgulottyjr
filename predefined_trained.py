@@ -170,7 +170,7 @@ def main():
         "model": "ResNet18_pretrained",   # Change name when using a different model
         "batch_size": 512, # m1 pro: 512, cuda: 512
         "learning_rate": 0.001,
-        "epochs": 20,  # Train for longer in a real scenario
+        "epochs": 5,  # Train for longer in a real scenario
         "num_workers": 4, # Adjust based on your system
         "device": "mps" if torch.backends.mps.is_available() else "cuda" if torch.cuda.is_available() else "cpu",
         "data_dir": "./data",  # Make sure this directory exists
@@ -302,6 +302,8 @@ def main():
     ############################################################################
     import eval_cifar100
     import eval_ood
+
+    model.eval()
 
     # --- Evaluation on Clean CIFAR-100 Test Set ---
     predictions, clean_accuracy = eval_cifar100.evaluate_cifar100_test(model, testloader, CONFIG["device"])
