@@ -263,7 +263,7 @@ def main():
     ############################################################################
     criterion = criterion = nn.CrossEntropyLoss(label_smoothing=0.1)
     optimizer = torch.optim.Adam(model.parameters(), lr=CONFIG["learning_rate"], weight_decay=5e-4)
-    scheduler = scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=CONFIG["epochs"])
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=CONFIG["epochs"])
 
 
     # Initialize wandb
