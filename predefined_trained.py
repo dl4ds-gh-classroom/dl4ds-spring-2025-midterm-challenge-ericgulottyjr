@@ -167,9 +167,9 @@ def main():
 
     CONFIG = {
         "model": "ResNet18_pretrained",   # Change name when using a different model
-        "batch_size": 256, # m1 pro: 512, cuda: 512
-        "learning_rate": 0.001,
-        "backbone_lr": 0.0001,
+        "batch_size": 512, # m1 pro: 512, cuda: 512
+        "learning_rate": 0.003,
+        "backbone_lr": 0.00007,
         "epochs": 40,  # Train for longer in a real scenario
         "warmup_epochs": 5, 
         "num_workers": 4, # Adjust based on your system
@@ -269,7 +269,7 @@ def main():
     ############################################################################
     # Loss Function, Optimizer and optional learning rate scheduler
     ############################################################################
-    criterion = nn.CrossEntropyLoss(label_smoothing=0.1)
+    criterion = nn.CrossEntropyLoss(label_smoothing=0.05)
     # Initially, only the fc parameters are being optimized.
     optimizer = torch.optim.Adam(model.fc.parameters(), lr=CONFIG["learning_rate"], weight_decay=5e-4)
     
