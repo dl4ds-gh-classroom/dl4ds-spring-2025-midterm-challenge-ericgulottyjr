@@ -167,7 +167,7 @@ def main():
 
     CONFIG = {
         "model": "ResNet18_pretrained",   # Change name when using a different model
-        "batch_size": 512, # m1 pro: 512, cuda: 512
+        "batch_size": 256, # m1 pro: 512, cuda: 512
         "learning_rate": 0.001,
         "backbone_lr": 0.0001,
         "epochs": 40,  # Train for longer in a real scenario
@@ -187,10 +187,12 @@ def main():
     ############################################################################
     #      Data Transformation (Example - You might want to modify) 
     ############################################################################
+    from torchvision.transforms import RandAugment
 
     transform_train = transforms.Compose([
         transforms.RandomResizedCrop(224),
         transforms.RandomHorizontalFlip(),
+        RandAugment(),
         transforms.ToTensor(),
         transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),  # ImageNet normalization
     ])
