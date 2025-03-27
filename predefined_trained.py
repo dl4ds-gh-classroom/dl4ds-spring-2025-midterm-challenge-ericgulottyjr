@@ -69,25 +69,20 @@ def train(epoch, model, trainloader, optimizer, criterion, CONFIG):
     # put the trainloader iterator in a tqdm so it can printprogress
     progress_bar = tqdm(trainloader, desc=f"Epoch {epoch+1}/{CONFIG['epochs']} [Train]", leave=False)
 
-    # iterate through all batches of one epoch
     for i, (inputs, labels) in enumerate(progress_bar):
-
-        # move inputs and labels to the target device
         inputs, labels = inputs.to(device), labels.to(device)
 
-        # inputs, targets_a, targets_b, lam = mixup_data(inputs, labels, alpha=0.2)
-
-        # Zero the parameter gradients
         optimizer.zero_grad()
 
-        # Forward pass: compute predicted outputs by passing inputs to the model
-        outputs = model(inputs)
-
-        # Compute the loss
-        loss = criterion(outputs,labels)
-
-        # For Mixup
-        # loss = lam * criterion(outputs, targets_a) + (1 - lam) * criterion(outputs, targets_b)
+        # --- If mixup is enabled, transform inputs and labels ---
+        if CONFIG["use_mixup"]:
+            inputs, targets_a, targets_b, lam = mixup_data(inputs, labels, alpha=CONFIG["mixup_alpha"])
+            outputs = model(inputs)
+            loss = lam * criterion(outputs, targets_a) + (1 - lam) * criterion(outputs, targets_b)
+        else:
+            # No mixup
+            outputs = model(inputs)
+            loss = criterion(outputs, labels)
 
         # Backward pass: compute gradient of the loss with respect to model parameters
         loss.backward()
@@ -168,8 +163,8 @@ def main():
     CONFIG = {
         "model": "ResNet18_pretrained",   # Change name when using a different model
         "batch_size": 512, # m1 pro: 512, cuda: 512
-        "learning_rate": 0.003,
-        "backbone_lr": 0.00007,
+        "learning_rate": 0.001,
+        "backbone_lr": 0.0001,
         "epochs": 40,  # Train for longer in a real scenario
         "warmup_epochs": 5, 
         "num_workers": 4, # Adjust based on your system
@@ -178,6 +173,9 @@ def main():
         "ood_dir": "./data/ood-test",
         "wandb_project": "sp25-ds542-challenge",
         "seed": 42,
+        # Mixup Params
+        "use_mixup": True,      # Toggle Mixup on/off
+        "mixup_alpha": 0.2      # Beta distribution parameter
     }
 
     import pprint
