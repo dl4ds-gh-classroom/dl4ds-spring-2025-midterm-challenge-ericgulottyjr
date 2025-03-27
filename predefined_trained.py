@@ -175,7 +175,7 @@ def main():
         "seed": 42,
         # Mixup Params
         "use_mixup": True,      # Toggle Mixup on/off
-        "mixup_alpha": 0.2      # Beta distribution parameter
+        "mixup_alpha": 0.4      # Beta distribution parameter
     }
 
     import pprint
