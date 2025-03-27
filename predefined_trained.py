@@ -107,7 +107,6 @@ def train(epoch, model, trainloader, optimizer, criterion, CONFIG):
     train_acc = 100. * correct / total
     return train_loss, train_acc
 
-
 ################################################################################
 # Define a validation function
 ################################################################################
@@ -170,7 +169,9 @@ def main():
         "model": "ResNet18_pretrained",   # Change name when using a different model
         "batch_size": 512, # m1 pro: 512, cuda: 512
         "learning_rate": 0.001,
+        "backbone_lr": 0.0001,
         "epochs": 40,  # Train for longer in a real scenario
+        "warmup_epochs": 5, 
         "num_workers": 4, # Adjust based on your system
         "device": "mps" if torch.backends.mps.is_available() else "cuda" if torch.cuda.is_available() else "cpu",
         "data_dir": "./data",  # Make sure this directory exists
@@ -233,14 +234,20 @@ def main():
     ############################################################################
     #   Instantiate model and move to target device
     ############################################################################
-    model = resnet18(pretrained=True)  # Set to True if you want pretrained weights (note the transform changes below)
-    
+    # Instantiate model and load pretrained weights
+    model = resnet18(pretrained=True)
+
     num_ftrs = model.fc.in_features
     model.fc = nn.Sequential(
         nn.Dropout(0.5),
         nn.Linear(num_ftrs, 100)
     )
     model = model.to(CONFIG["device"])
+
+    # Freeze the pretrained backbone (all parameters not in fc)
+    for name, param in model.named_parameters():
+        if "fc" not in name:
+            param.requires_grad = False
 
     print("\nModel summary:")
     print(f"{model}\n")
@@ -260,10 +267,20 @@ def main():
     ############################################################################
     # Loss Function, Optimizer and optional learning rate scheduler
     ############################################################################
-    criterion = criterion = nn.CrossEntropyLoss(label_smoothing=0.1)
-    optimizer = torch.optim.Adam(model.parameters(), lr=CONFIG["learning_rate"], weight_decay=5e-4)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=CONFIG["epochs"])
+    criterion = nn.CrossEntropyLoss(label_smoothing=0.1)
+    # Initially, only the fc parameters are being optimized.
+    optimizer = torch.optim.Adam(model.fc.parameters(), lr=CONFIG["learning_rate"], weight_decay=5e-4)
+    
+    # We will implement a manual warmup for the classifier.
+    def adjust_learning_rate(optimizer, epoch, warmup_epochs, base_lr):
+        """Linearly increase lr for the classifier during warmup."""
+        lr = base_lr * float(epoch + 1) / warmup_epochs
+        for param_group in optimizer.param_groups:
+            param_group['lr'] = lr
+        return lr
 
+    # Use cosine annealing for epochs after warmup.
+    cosine_scheduler = None  # Will be reinitialized after warmup.
 
     # Initialize wandb
     wandb.init(project="-sp25-ds542-challenge", config=CONFIG)
@@ -275,26 +292,42 @@ def main():
     best_val_acc = 0.0
 
     for epoch in range(CONFIG["epochs"]):
+        if epoch < CONFIG["warmup_epochs"]:
+            # Warmup phase: adjust lr for fc parameters only.
+            current_lr = adjust_learning_rate(optimizer, epoch, CONFIG["warmup_epochs"], CONFIG["learning_rate"])
+            print(f"Epoch {epoch+1}: Warmup phase, classifier lr: {current_lr:.6f}")
+        elif epoch == CONFIG["warmup_epochs"]:
+            # End of warmup: unfreeze backbone and add them to the optimizer with a lower lr.
+            backbone_params = [param for name, param in model.named_parameters() if "fc" not in name]
+            for param in backbone_params:
+                param.requires_grad = True
+            optimizer.add_param_group({'params': backbone_params, 'lr': CONFIG["backbone_lr"]})
+            # Reinitialize cosine annealing scheduler for the remaining epochs.
+            remaining_epochs = CONFIG["epochs"] - epoch
+            cosine_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=remaining_epochs)
+            print(f"Epoch {epoch+1}: Unfreezing backbone; added {len(backbone_params)} parameters with lr {CONFIG['backbone_lr']}")
+        else:
+            # Use cosine annealing scheduler to update learning rates.
+            cosine_scheduler.step()
+
         train_loss, train_acc = train(epoch, model, trainloader, optimizer, criterion, CONFIG)
         val_loss, val_acc = validate(model, valloader, criterion, CONFIG["device"])
-        scheduler.step()
-
-        # log to WandB
+        print(f"Epoch {epoch+1}: Train Acc: {train_acc:.2f}%, Val Acc: {val_acc:.2f}%")
+        
         wandb.log({
             "epoch": epoch + 1,
             "train_loss": train_loss,
             "train_acc": train_acc,
             "val_loss": val_loss,
             "val_acc": val_acc,
-            "lr": optimizer.param_groups[0]["lr"] # Log learning rate
+            "lr": optimizer.param_groups[0]["lr"]  # Log the classifier lr (for reference)
         })
 
-        # Save the best model (based on validation accuracy)
         if val_acc > best_val_acc:
             best_val_acc = val_acc
             torch.save(model.state_dict(), "best_model.pth")
-            wandb.save("best_model.pth") # Save to wandb as well
-
+            wandb.save("best_model.pth")
+    
     wandb.finish()
 
     ############################################################################
