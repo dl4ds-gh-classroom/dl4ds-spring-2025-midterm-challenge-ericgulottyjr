@@ -135,7 +135,7 @@ Data augmentation techniques varied across the project parts, alongside the cruc
 
 ## Results Analysis
 
-***Leaderboard Performance Summary (Username: ericgulotty):***
+- ***Leaderboard Performance Summary (Username: ericgulotty):***
     - ***Part 1 Best (`starter_code.py`):*** `0.31649` (Submission: "20 Epoch Simple Model Adam Optimizer")
     - ***Part 2 Best (`predefined_untrained.py`):*** `0.46895` (Submission: "40 Epoch Predefined Model w/ Mixup")
     - ***Part 3 Best (`predefined_trained.py`):*** `0.61158` (Submission: "40 Epoch Pretrained Model with Mixup")
