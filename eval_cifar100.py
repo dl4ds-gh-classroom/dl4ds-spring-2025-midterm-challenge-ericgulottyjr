@@ -12,7 +12,9 @@ import wandb
 # --- Evaluation on Clean CIFAR-100 Test Set ---
 def evaluate_cifar100_test(model, testloader, device):
     """Evaluation on clean CIFAR-100 test set."""
-    model.load_state_dict(torch.load("best_model.pth")) # Load the best model
+    print(f"Loading model state from: {model}")
+    model.load_state_dict(torch.load(model, map_location=device)) # Load the specified model
+    model.to(device) # Ensure model is on the correct device after loading
     model.eval()
     correct = 0
     total = 0
