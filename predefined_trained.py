@@ -74,13 +74,16 @@ def train(epoch, model, trainloader, optimizer, criterion, CONFIG):
 
         optimizer.zero_grad()
 
-        # --- If mixup is enabled, transform inputs and labels ---
-        if CONFIG["use_mixup"]:
+        # --- If mixup/cutmix is enabled, transform inputs and labels ---
+        if CONFIG["use_cutmix"]:
+            inputs, targets_a, targets_b, lam = cutmix_data(inputs, labels, alpha=CONFIG["cutmix_alpha"])
+            outputs = model(inputs)
+            loss = lam * criterion(outputs, targets_a) + (1 - lam) * criterion(outputs, targets_b)
+        elif CONFIG["use_mixup"]:
             inputs, targets_a, targets_b, lam = mixup_data(inputs, labels, alpha=CONFIG["mixup_alpha"])
             outputs = model(inputs)
             loss = lam * criterion(outputs, targets_a) + (1 - lam) * criterion(outputs, targets_b)
         else:
-            # No mixup
             outputs = model(inputs)
             loss = criterion(outputs, labels)
 
@@ -150,6 +153,28 @@ def mixup_data(x, y, alpha=1.0):
     y_a, y_b = y, y[index]
     return mixed_x, y_a, y_b, lam
 
+def cutmix_data(x, y, alpha=1.0):
+    """Apply CutMix augmentation."""
+    if alpha > 0:
+        lam = np.random.beta(alpha, alpha)
+    else:
+        lam = 1
+    batch_size, _, H, W = x.size()
+    rand_index = torch.randperm(batch_size).to(x.device)
+    # Define the patch size
+    cx = np.random.randint(W)
+    cy = np.random.randint(H)
+    bbx1 = np.clip(cx - int(W * np.sqrt(1 - lam)) // 2, 0, W)
+    bby1 = np.clip(cy - int(H * np.sqrt(1 - lam)) // 2, 0, H)
+    bbx2 = np.clip(cx + int(W * np.sqrt(1 - lam)) // 2, 0, W)
+    bby2 = np.clip(cy + int(H * np.sqrt(1 - lam)) // 2, 0, H)
+    x[:, :, bby1:bby2, bbx1:bbx2] = x[rand_index, :, bby1:bby2, bbx1:bbx2]
+    y_a, y_b = y, y[rand_index]
+    # Adjust lambda to exactly match pixel ratio
+    lam = 1 - ((bbx2 - bbx1) * (bby2 - bby1) / (W * H))
+    return x, y_a, y_b, lam
+
+
 def main():
 
     ############################################################################
@@ -162,20 +187,22 @@ def main():
 
     CONFIG = {
         "model": "ResNet18_pretrained",   # Change name when using a different model
-        "batch_size": 512, # m1 pro: 512, cuda: 512
+        "batch_size": 256, # m1 pro: 512, cuda: 512
         "learning_rate": 0.001,
         "backbone_lr": 0.0001,
-        "epochs": 40,  # Train for longer in a real scenario
+        "epochs": 35,  # Train for longer in a real scenario
         "warmup_epochs": 5, 
         "num_workers": 4, # Adjust based on your system
         "device": "mps" if torch.backends.mps.is_available() else "cuda" if torch.cuda.is_available() else "cpu",
         "data_dir": "./data",  # Make sure this directory exists
         "ood_dir": "./data/ood-test",
-        "wandb_project": "sp25-ds542-challenge",
+        "wandb_project": "sp25-ds542-challenge-improved",
         "seed": 42,
         # Mixup Params
-        "use_mixup": True,      # Toggle Mixup on/off
-        "mixup_alpha": 0.4      # Beta distribution parameter
+        "use_mixup": False,      # Toggle Mixup on/off
+        "mixup_alpha": 0.2,      # Beta distribution parameter
+        "use_cutmix": True,      # Toggle for CutMix on/off
+        "cutmix_alpha": 1.0,
     }
 
     import pprint
@@ -185,7 +212,7 @@ def main():
     ############################################################################
     #      Data Transformation (Example - You might want to modify) 
     ############################################################################
-    from torchvision.transforms import RandAugment
+    from torchvision.transforms import RandAugment, TrivialAugment
 
     transform_train = transforms.Compose([
         transforms.RandomResizedCrop(224),
@@ -283,7 +310,7 @@ def main():
     cosine_scheduler = None  # Will be reinitialized after warmup.
 
     # Initialize wandb
-    wandb.init(project="-sp25-ds542-challenge", config=CONFIG)
+    wandb.init(project=CONFIG["wandb_project"], config=CONFIG)
     wandb.watch(model)  # watch the model gradients
 
     ############################################################################
