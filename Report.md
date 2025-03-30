@@ -171,6 +171,7 @@ Data augmentation techniques varied across the project parts, alongside the cruc
 The initial phase focused on establishing a baseline with the Simple CNN architecture.
 
 ![Simple CNN WandB Runs](experiment_tracking/simpleCNN/CNN_top_3.png)
+
 *(Figure: WandB comparison of Simple CNN runs)*
 
 The chart above compares runs corresponding to the initial Simple CNN submissions:
@@ -187,9 +188,11 @@ These initial experiments confirmed the viability of the pipeline and showed the
 This phase involved training the ResNet18 architecture (modified for 32x32 inputs) from scratch on CIFAR-100.
 
 ![Untrained ResNet18 Test Runs](experiment_tracking/ResNet18_untrained/Untrained_test_runs.png)
+
 *(Figure: Initial test runs for untrained ResNet18)*
 
 ![Untrained ResNet18 Submission Runs](experiment_tracking/ResNet18_untrained/Untrained_submissions.png)
+
 *(Figure: WandB comparison of untrained ResNet18 submission runs)*
 
 - **Initial Test Runs:** The first image shows early test runs. The loss curves exhibit a relatively smooth decrease, typical of training with a standard CrossEntropyLoss, converging steadily.
@@ -206,16 +209,19 @@ These experiments demonstrated the performance improvement gained from using the
 This phase focused on fine-tuning the pretrained ResNet18 model.
 
 ![Pre-Eval Fix Runs](experiment_tracking/ResNet18_trained/Pre_eval_fix.png)
+
 *(Figure: Example WandB runs before `eval_ood_pretrained.py` fix)*
 
 - **Initial Runs (Pre-Eval Fix):** The first image shows examples of runs conducted *before* the `eval_ood_pretrained.py` script was created. While training and validation curves appear reasonable within WandB (reflecting performance on the 224x224 validation set), these runs resulted in extremely poor Kaggle scores (0.04-0.05) due to the OOD evaluation mismatch, highlighting the importance of consistent data processing across all evaluation stages.
 
 ![Pretrained Run with Warmup](experiment_tracking/ResNet18_trained/Pretrained_w_warmup.png)
+
 *(Figure: WandB run corresponding to the first submission with Warmup enabled)*
 
 - **Warmup Implementation:** After fixing the evaluation function, the fine-tuning strategy incorporating a 5-epoch linear warmup was implemented. The run shown above corresponds to the Kaggle submission "40 Epoch Predefined Model w/ Warmup" (score: 0.55561), showing the characteristic learning rate increase during the first 5 epochs followed by cosine annealing decay.
 
 ![Pretrained Runs with RandAugment and LR Adjustment](experiment_tracking/ResNet18_trained/Pretrained_RandAug_LRAdj.png)
+
 *(Figure: Comparison of runs adding RandAugment and experimenting with LR adjustment)*
 
 - **Adding RandAugment & LR Experiments:** The chart above compares:
@@ -223,6 +229,7 @@ This phase focused on fine-tuning the pretrained ResNet18 model.
     - **LR Adjustment Run:** An experiment was conducted adjusting the classifier learning rate (e.g., from 0.001 to 0.003) after warmup, corresponding to the submission "40 Epoch Pretrained Model w/ Learning Rate Adjustment" (score: 0.59624). While the validation accuracy was slightly lower than the standard RandAugment run, the loss curve shows a distinctly different shape, indicating the learning dynamics were altered by the higher classifier learning rate.
 
 ![Comparison of Final Pretrained Runs](experiment_tracking/ResNet18_trained/Pretrained_Fnial_4.png)
+
 *(Figure: Comparison of the top 4 experimental runs for Part 3)*
 
 - **Final Experiments with Mixup/Cutmix:** The final set of experiments introduced Mixup and CutMix:
@@ -239,6 +246,7 @@ Overall, the WandB logs clearly show the benefit of transfer learning and the si
 Further experiments were conducted using the `v2` script, exploring alternative techniques.
 
 ![Self-Distillation Test](experiment_tracking/ResNet18_v2/Self_Distill_Test.png)
+
 *(Figure: Example run testing Self-Distillation)*
 
 - **Self-Distillation:** An experiment implementing self-distillation was conducted. While the training completed, initial results suggested no significant performance improvement over the best fine-tuning results from `v1`. Given the added complexity of the two-phase training and tuning distillation hyperparameters (temperature, alpha), this approach was not pursued further.
