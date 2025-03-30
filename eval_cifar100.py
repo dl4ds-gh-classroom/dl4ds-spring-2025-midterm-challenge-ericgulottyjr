@@ -10,10 +10,10 @@ from tqdm.auto import tqdm  # For progress bars
 import wandb    
 
 # --- Evaluation on Clean CIFAR-100 Test Set ---
-def evaluate_cifar100_test(model, testloader, device, model_path="best_model.pth"):
+def evaluate_cifar100_test(model, testloader, device):
     """Evaluation on clean CIFAR-100 test set."""
-    print(f"Loading model state from: {model_path}")
-    model.load_state_dict(torch.load(model_path, map_location=device)) # Load the specified model
+    print(f"Loading model state from: {model}")
+    model.load_state_dict(torch.load(model, map_location=device)) # Load the specified model
     model.to(device) # Ensure model is on the correct device after loading
     model.eval()
     correct = 0
