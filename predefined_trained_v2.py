@@ -740,4 +740,145 @@ def main():
     model.load_state_dict(best_model_state)
     
     ############################################################################
-    #    Self-Distillation Phase (if enable
+    #    Self-Distillation Phase (if enabled)
+    ############################################################################
+    if CONFIG["use_self_distillation"]:
+        teacher_model = resnet18(pretrained=True)
+        num_ftrs = teacher_model.fc.in_features
+        teacher_model.fc = nn.Sequential(
+            nn.Dropout(0.5),
+            nn.Linear(num_ftrs, 100)
+        )
+        teacher_model = teacher_model.to(CONFIG["device"])
+        # Freeze teacher model
+        for param in teacher_model.parameters():
+            param.requires_grad = False
+
+        # We will implement a manual warmup for the classifier.
+        def adjust_learning_rate(optimizer, epoch, warmup_epochs, base_lr):
+            """Linearly increase lr for the classifier during warmup."""
+            lr = base_lr * float(epoch + 1) / warmup_epochs
+            for param_group in optimizer.param_groups:
+                param_group['lr'] = lr
+            return lr
+
+        # Use cosine annealing for epochs after warmup.
+        cosine_scheduler = None  # Will be reinitialized after warmup.
+
+        for epoch in range(CONFIG["epochs"]):
+            if epoch < CONFIG["warmup_epochs"]:
+                # Warmup phase: adjust lr for fc parameters only.
+                current_lr = adjust_learning_rate(optimizer, epoch, CONFIG["warmup_epochs"], CONFIG["learning_rate"])
+                print(f"Epoch {epoch+1}: Warmup phase, classifier lr: {current_lr:.6f}")
+            elif epoch == CONFIG["warmup_epochs"]:
+                # End of warmup: unfreeze backbone and add them to the optimizer with a lower lr.
+                backbone_params = [param for name, param in model.named_parameters() if "fc" not in name]
+                for param in backbone_params:
+                    param.requires_grad = True
+                optimizer.add_param_group({'params': backbone_params, 'lr': CONFIG["backbone_lr"]})
+                # Reinitialize cosine annealing scheduler for the remaining epochs.
+                remaining_epochs = CONFIG["epochs"] - epoch
+                cosine_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=remaining_epochs)
+                print(f"Epoch {epoch+1}: Unfreezing backbone; added {len(backbone_params)} parameters with lr {CONFIG['backbone_lr']}")
+            else:
+                # Use cosine annealing scheduler to update learning rates.
+                cosine_scheduler.step()
+
+            # Training phase
+            model.train()
+            running_loss = 0.0
+            correct = 0
+            total = 0
+
+            progress_bar = tqdm(trainloader, desc=f"Epoch {epoch+1}/{CONFIG['epochs']} [Train]", leave=False)
+
+            for i, (inputs, labels) in enumerate(progress_bar):
+                inputs, labels = inputs.to(CONFIG["device"]), labels.to(CONFIG["device"])
+
+                optimizer.zero_grad()
+
+                # Forward pass
+                outputs = model(inputs)
+                
+                # Calculate loss
+                if CONFIG["use_self_distillation"] and teacher_model is not None:
+                    with torch.no_grad():
+                        teacher_outputs = teacher_model(inputs)
+                    
+                    # Combine hard and soft labels
+                    hard_loss = criterion(outputs, labels)
+                    soft_loss = F.kl_div(
+                        F.log_softmax(outputs / CONFIG["temperature"], dim=1),
+                        F.softmax(teacher_outputs / CONFIG["temperature"], dim=1),
+                        reduction='batchmean'
+                    ) * (CONFIG["temperature"] ** 2)
+                    
+                    loss = (1 - CONFIG["alpha"]) * hard_loss + CONFIG["alpha"] * soft_loss
+                else:
+                    # Regular training without distillation
+                    if CONFIG["use_mixup"]:
+                        inputs, targets_a, targets_b, lam = mixup_data(inputs, labels, alpha=CONFIG["mixup_alpha"])
+                        outputs = model(inputs)
+                        loss = lam * criterion(outputs, targets_a) + (1 - lam) * criterion(outputs, targets_b)
+                    else:
+                        loss = criterion(outputs, labels)
+
+                loss.backward()
+                optimizer.step()
+
+                running_loss += loss.item()
+                _, predicted = outputs.max(1)
+                total += labels.size(0)
+                correct += predicted.eq(labels).sum().item()
+
+                progress_bar.set_postfix({"loss": running_loss / (i + 1), "acc": 100. * correct / total})
+
+            train_loss = running_loss / len(trainloader)
+            train_acc = 100. * correct / total
+
+            # Validation phase
+            val_loss, val_acc = validate(model, valloader, criterion, CONFIG["device"])
+            print(f"Epoch {epoch+1}: Train Acc: {train_acc:.2f}%, Val Acc: {val_acc:.2f}%")
+            
+            # Log metrics
+            wandb.log({
+                "epoch": epoch + 1,
+                "train_loss": train_loss,
+                "train_acc": train_acc,
+                "val_loss": val_loss,
+                "val_acc": val_acc,
+                "lr": optimizer.param_groups[0]["lr"]
+            })
+
+            # Save best model
+            if val_acc > best_val_acc:
+                best_val_acc = val_acc
+                torch.save(model.state_dict(), "best_model.pth")
+                wandb.save("best_model.pth")
+                
+                # Update teacher model if using self-distillation
+                if CONFIG["use_self_distillation"]:
+                    teacher_model.load_state_dict(model.state_dict())
+        
+    wandb.finish()
+
+    ############################################################################
+    # Evaluation
+    ############################################################################
+    import eval_cifar100
+    import eval_ood_pretrained
+
+    # --- Evaluation on Clean CIFAR-100 Test Set ---
+    predictions, clean_accuracy = eval_cifar100.evaluate_cifar100_test(model, testloader, CONFIG["device"])
+    print(f"Clean CIFAR-100 Test Accuracy: {clean_accuracy:.2f}%")
+
+    # --- Evaluation on OOD ---
+    all_predictions = eval_ood_pretrained.evaluate_ood_test(model, CONFIG)
+
+    # --- Create Submission File (OOD) ---
+    submission_df_ood = eval_ood_pretrained.create_ood_df(all_predictions)
+    submission_df_ood.to_csv("submission_ood.csv", index=False)
+    print("submission_ood.csv created successfully.")
+
+if __name__ == '__main__':
+    main()
