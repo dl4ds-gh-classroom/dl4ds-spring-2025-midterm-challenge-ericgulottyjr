@@ -782,17 +782,26 @@ def main():
                 layer_to_unfreeze = layer_groups[layer_idx]
                 print(f"Epoch {epoch+1}: Unfreezing layer group {layer_idx+1}")
                 
-                # Unfreeze the layer
+                # Get the parameters that are not already in the optimizer
+                params_to_add = []
                 for param in layer_to_unfreeze.parameters():
-                    param.requires_grad = True
+                    # Check if parameter is already being optimized
+                    already_in_optimizer = any(
+                        param is p for group in optimizer.param_groups for p in group['params']
+                    )
+                    if not already_in_optimizer:
+                        param.requires_grad = True
+                        params_to_add.append(param)
                 
-                # Add the unfrozen parameters to the optimizer with a lower learning rate
-                # The deeper the layer, the lower the learning rate
-                lr_factor = 0.1 ** (len(layer_groups) - layer_idx)
-                optimizer.add_param_group({
-                    'params': layer_to_unfreeze.parameters(),
-                    'lr': CONFIG["backbone_lr"] * lr_factor
-                })
+                # Only add new parameters to the optimizer
+                if params_to_add:
+                    # The deeper the layer, the lower the learning rate
+                    lr_factor = 0.1 ** (len(layer_groups) - layer_idx)
+                    optimizer.add_param_group({
+                        'params': params_to_add,
+                        'lr': CONFIG["backbone_lr"] * lr_factor
+                    })
+                    print(f"Added {len(params_to_add)} new parameters to optimizer with lr {CONFIG['backbone_lr'] * lr_factor}")
         
         # Train one epoch
         train_loss, train_acc = train(
