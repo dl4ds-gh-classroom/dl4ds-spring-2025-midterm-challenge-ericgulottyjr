@@ -13,6 +13,7 @@ import wandb
 import json
 import copy
 from torch.amp import autocast, GradScaler
+import math
 
 ################################################################################
 # Feature Pyramid Network Implementation
@@ -233,9 +234,8 @@ def train(epoch, model, trainloader, optimizer, criterion, CONFIG, l2sp_reg=None
     for i, (inputs, labels) in enumerate(progress_bar):
         inputs, labels = inputs.to(device), labels.to(device)
         
-        # Mixed precision training with updated autocast
         with autocast(device_type='cuda' if device == 'cuda' else 'cpu', enabled=CONFIG.get("use_mixed_precision", False)):
-            # --- Handle data augmentation ---
+            # Data augmentation handling
             if CONFIG["use_cutmix"] and np.random.random() < 0.5:
                 inputs, targets_a, targets_b, lam = cutmix_data(inputs, labels, alpha=CONFIG["cutmix_alpha"])
                 outputs = model(inputs)
@@ -248,48 +248,45 @@ def train(epoch, model, trainloader, optimizer, criterion, CONFIG, l2sp_reg=None
                 outputs = model(inputs)
                 loss = criterion(outputs, labels)
             
-            # Add consistency regularization loss if enabled
+            # Scale loss and regularization terms
             if CONFIG.get("use_consistency", False):
                 cons_loss = consistency_loss(model, inputs, 
                                            temperature=CONFIG.get("consistency_temp", 1.0),
-                                           alpha=CONFIG.get("consistency_alpha", 0.5))
-                loss += cons_loss
+                                           alpha=CONFIG.get("consistency_alpha", 0.1))  # Reduced alpha
+                loss = loss + 0.1 * cons_loss  # Scale down consistency loss
             
-            # Add L2SP regularization if provided
             if l2sp_reg is not None:
-                loss += l2sp_reg()
+                l2sp_loss = l2sp_reg()
+                loss = loss + 0.01 * l2sp_loss  # Scale down L2SP loss
             
-            # Scale the loss for gradient accumulation
             loss = loss / accumulation_steps
         
-        # Backward pass with mixed precision
+        # Backward pass with gradient clipping
         if scaler is not None:
             scaler.scale(loss).backward()
-        else:
-            loss.backward()
-
-        # Only step and zero grad after accumulation or at the end of loader
-        if (i + 1) % accumulation_steps == 0 or (i + 1) == len(trainloader):
-            if scaler is not None:
+            if (i + 1) % accumulation_steps == 0 or (i + 1) == len(trainloader):
+                scaler.unscale_(optimizer)
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
                 scaler.step(optimizer)
                 scaler.update()
-            else:
+                optimizer.zero_grad()
+        else:
+            loss.backward()
+            if (i + 1) % accumulation_steps == 0 or (i + 1) == len(trainloader):
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
                 optimizer.step()
-            optimizer.zero_grad()
+                optimizer.zero_grad()
 
         running_loss += loss.item() * accumulation_steps
         _, predicted = outputs.max(1)
+        total += labels.size(0)
+        correct += predicted.eq(labels).sum().item()
 
-        # For accuracy calculation, we need to handle mixup/cutmix
-        if CONFIG["use_cutmix"] or CONFIG["use_mixup"]:
-            # For mixup/cutmix, we'll use original labels for simplicity
-            total += labels.size(0)
-            correct += predicted.eq(labels).sum().item()
-        else:
-            total += labels.size(0)
-            correct += predicted.eq(labels).sum().item()
-
-        progress_bar.set_postfix({"loss": running_loss / (i + 1), "acc": 100. * correct / total})
+        progress_bar.set_postfix({
+            "loss": running_loss / (i + 1),
+            "acc": 100. * correct / total,
+            "lr": optimizer.param_groups[0]["lr"]
+        })
 
     train_loss = running_loss / len(trainloader)
     train_acc = 100. * correct / total
@@ -574,7 +571,7 @@ def main():
         "unfreeze_schedule": [10, 15, 20, 25],  # Epochs at which to unfreeze layer groups
         
         # FPN config
-        "use_fpn": True,
+        "use_fpn": False,
         
         # Gradient accumulation
         "accumulation_steps": 4,  # Accumulate gradients over 4 batches
@@ -593,7 +590,7 @@ def main():
         "use_mixed_precision": True,
         
         # Cosine annealing with restarts
-        "use_sgdr": True,
+        "use_sgdr": False,
         "sgdr_T_0": 10,  # Initial restart interval
         "sgdr_T_mult": 2,  # Multiply factor for subsequent restarts
         "sgdr_eta_min": 1e-6,  # Minimum learning rate
@@ -701,52 +698,87 @@ def main():
     print(f"{model}\n")
 
     ############################################################################
-    #    Loss Function, Optimizer and Discriminative Learning Rates
+    #    Loss Function, Optimizer and Learning Rate Schedule
     ############################################################################
-    criterion = nn.CrossEntropyLoss(label_smoothing=0.1)  # Increased from 0.05
-    
-    # Create parameter groups for discriminative learning rates
-    if isinstance(model, EnhancedResNet18) and CONFIG["progressive_unfreezing"]:
-        # Initially, only train the classifier
-        for param in model.parameters():
-            param.requires_grad = False
-        
-        # Enable gradients for the classifier
-        for param in model.classifier.parameters():
-            param.requires_grad = True
+    # Cross Entropy with label smoothing and focal loss components
+    class SmoothFocalLoss(nn.Module):
+        def __init__(self, num_classes, smoothing=0.1, gamma=2.0):
+            super().__init__()
+            self.num_classes = num_classes
+            self.smoothing = smoothing
+            self.gamma = gamma
+
+        def forward(self, pred, target):
+            pred = F.log_softmax(pred, dim=1)
             
-        # Set up optimizer with only classifier parameters
-        optimizer = torch.optim.AdamW(
-            model.classifier.parameters(), 
-            lr=CONFIG["learning_rate"],
-            weight_decay=1e-4
-        )
-    else:
-        # If not using progressive unfreezing, use simplified approach
-        optimizer = torch.optim.AdamW(
-            model.parameters(),
-            lr=CONFIG["learning_rate"],
-            weight_decay=1e-4
-        )
+            # Create one-hot encoding of target
+            with torch.no_grad():
+                true_dist = torch.zeros_like(pred)
+                true_dist.fill_(self.smoothing / (self.num_classes - 1))
+                true_dist.scatter_(1, target.data.unsqueeze(1), 1.0 - self.smoothing)
+            
+            # Focal loss component
+            pt = torch.exp(pred)
+            focal_weight = (1 - pt) ** self.gamma
+            
+            # Combine focal weight with smoothed targets
+            loss = -(true_dist * pred * focal_weight).sum(dim=1).mean()
+            return loss
+
+    # Initialize the loss function
+    criterion = SmoothFocalLoss(
+        num_classes=100,
+        smoothing=0.1,
+        gamma=1.0
+    )
     
+    # Initialize optimizer with Adam instead of AdamW for better stability
+    optimizer = torch.optim.Adam(
+        model.parameters(),
+        lr=CONFIG["learning_rate"],
+        betas=(0.9, 0.999),
+        eps=1e-8,
+        weight_decay=1e-4  # Reduced weight decay for Adam
+    )
+
+    # Improved learning rate scheduler
+    def get_cosine_schedule_with_warmup(optimizer, num_warmup_steps, num_training_steps, num_cycles=0.5, min_lr_ratio=0.1):
+        """
+        Create a schedule with a learning rate that decreases following the values of the cosine function between the
+        initial lr set in the optimizer to min_lr_ratio * initial_lr, after a warmup period during which it increases
+        linearly between 0 and the initial lr set in the optimizer.
+        """
+        def lr_lambda(current_step):
+            if current_step < num_warmup_steps:
+                # Linear warmup
+                return float(current_step) / float(max(1, num_warmup_steps))
+            
+            # Progress after warmup
+            progress = float(current_step - num_warmup_steps) / float(max(1, num_training_steps - num_warmup_steps))
+            
+            # Cosine decay with minimum learning rate
+            cosine_decay = max(0.0, math.cos(math.pi * num_cycles * progress))
+            decayed_learning_rate = max(min_lr_ratio, 0.5 * (1.0 + cosine_decay))
+            
+            return decayed_learning_rate
+
+        return torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
+
+    # Calculate number of steps
+    num_training_steps = len(trainloader) * CONFIG["epochs"]
+    num_warmup_steps = len(trainloader) * 2  # 2 epochs of warmup
+    
+    # Create scheduler with smoother decay and minimum learning rate
+    scheduler = get_cosine_schedule_with_warmup(
+        optimizer,
+        num_warmup_steps=num_warmup_steps,
+        num_training_steps=num_training_steps,
+        num_cycles=0.5,  # Half cycle for smoother decay
+        min_lr_ratio=0.1  # Minimum learning rate will be 10% of initial
+    )
+
     # Initialize mixed precision scaler if enabled
     scaler = GradScaler() if CONFIG["use_mixed_precision"] and torch.cuda.is_available() else None
-    
-    # Initialize cosine annealing with restarts if enabled
-    if CONFIG["use_sgdr"]:
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
-            optimizer, 
-            T_0=CONFIG["sgdr_T_0"],
-            T_mult=CONFIG["sgdr_T_mult"],
-            eta_min=CONFIG["sgdr_eta_min"]
-        )
-    else:
-        # Fallback to regular cosine annealing
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-            optimizer, 
-            T_max=CONFIG["epochs"],
-            eta_min=1e-6
-        )
 
     # Initialize wandb
     wandb.init(project=CONFIG["wandb_project"], config=CONFIG)
