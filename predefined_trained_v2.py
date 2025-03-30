@@ -19,6 +19,7 @@ import wandb
 ###############################################################################
 # Model Definition
 ###############################################################################
+# NOTE: This SimpleCNN is an example definition and is NOT used when ResNet18 is selected.
 class SimpleCNN(nn.Module):
     def __init__(self):
         super(SimpleCNN, self).__init__()
@@ -148,6 +149,7 @@ def validate(model, valloader, criterion, device):
 ###############################################################################
 # Test-Time Augmentation (TTA) Functions
 ###############################################################################
+# NOTE: These functions are only active if CONFIG['use_tta'] is set to True.
 def test_time_augmentation(model, image, num_augmentations=10, device='cuda'):
     model.eval()
     tta_transforms = transforms.Compose([
@@ -235,13 +237,13 @@ def main():
         "batch_size": 256,
         "learning_rate": 0.001,
         "backbone_lr": 0.0001,
-        "epochs": 40, # Increased epochs, adjust as needed
+        "epochs": 40, # Number of training epochs
         "warmup_epochs": 5,
         "num_workers": 4,
         "device": "mps" if torch.backends.mps.is_available() else "cuda" if torch.cuda.is_available() else "cpu",
         "data_dir": "./data",
         "ood_dir": "./data/ood-test",
-        "wandb_project": "sp25-ds542-challenge-improved", # Keep project name or change
+        "wandb_project": "sp25-ds542-challenge-improved", # WandB project name
         "seed": 42,
         "use_mixup": True,
         "mixup_alpha": 0.2,
@@ -249,10 +251,10 @@ def main():
         "cutmix_alpha": 1.0,
         "label_smoothing": 0.1,
         "weight_decay": 5e-4,
-        # TTA parameters (can be enabled for evaluation)
+        # TTA parameters (only used if use_tta is True)
         "use_tta": False,
         "tta_num_augmentations": 10,
-        # Removed distillation parameters
+        # Removed distillation parameters (previously explored)
     }
     import pprint
     print("\nCONFIG Dictionary:")
@@ -261,14 +263,14 @@ def main():
     # Seed everything for reproducibility
     torch.manual_seed(CONFIG["seed"])
     np.random.seed(CONFIG["seed"])
-    # Potentially add cuda seeding if using CUDA
+    # For full CUDA reproducibility, consider torch.cuda.manual_seed_all(CONFIG['seed']) and potential cuDNN settings.
 
     # Define transforms using TrivialAugmentWide
-    # from torchvision.transforms import RandAugment # Keep commented or remove
+    # from torchvision.transforms import RandAugment # Using TrivialAugmentWide instead
     transform_train = transforms.Compose([
         transforms.RandomResizedCrop(224),
         transforms.RandomHorizontalFlip(),
-        TrivialAugmentWide(), # Changed from RandAugment
+        TrivialAugmentWide(), # Changed from RandAugment in v1; applies a simpler random augmentation policy.
         transforms.ToTensor(),
         transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
     ])
@@ -308,7 +310,7 @@ def main():
             param.requires_grad = False
 
     # --- Optimizer and Loss ---
-    # Use AdamW instead of Adam
+    # Use AdamW optimizer (Adam with decoupled weight decay, often improves generalization)
     optimizer = torch.optim.AdamW(model.fc.parameters(), lr=CONFIG["learning_rate"], weight_decay=CONFIG["weight_decay"])
     criterion = nn.CrossEntropyLoss(label_smoothing=CONFIG["label_smoothing"])
     cosine_scheduler = None
@@ -333,7 +335,7 @@ def main():
             # optimizer.add_param_group({'params': backbone_params, 'lr': CONFIG["backbone_lr"]})
             optimizer.add_param_group({'params': backbone_params, 'lr': CONFIG["backbone_lr"]})
             remaining_epochs = CONFIG["epochs"] - epoch
-            # Consider OneCycleLR or CosineAnnealingWarmRestarts here instead of plain Cosine
+            # Initialize cosine annealing scheduler for the remaining epochs.
             cosine_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=remaining_epochs)
             print(f"Epoch {epoch+1}/{CONFIG['epochs']}: Unfreezing backbone; added {len(backbone_params)} parameters with lr {CONFIG['backbone_lr']}")
         elif cosine_scheduler: # Check if scheduler exists before stepping
@@ -387,6 +389,7 @@ def main():
     import eval_ood_pretrained
     from eval_ood_pretrained import create_ood_df
 
+    # --- TTA Evaluation Logic (Inactive if use_tta is False) ---
     if CONFIG["use_tta"]:
         print(f"Evaluating with Test Time Augmentation (TTA)...")
         # Note: evaluate_with_tta needs the model object directly
