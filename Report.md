@@ -252,6 +252,7 @@ Further experiments were conducted using the `v2` script, exploring alternative 
 - **Self-Distillation:** An experiment implementing self-distillation was conducted. While the training completed, initial results suggested no significant performance improvement over the best fine-tuning results from `v1`. Given the added complexity of the two-phase training and tuning distillation hyperparameters (temperature, alpha), this approach was not pursued further.
 
 ![Hyperparameter Tests (v2)](experiment_tracking/ResNet18_v2/Hyperparameter_tests.png)
+
 *(Figure: Comparison of final hyperparameter tests using AdamW and TrivialAugment)*
 
 - **AdamW / TrivialAugment Tests:** Several runs were performed using the `v2` configuration (AdamW optimizer, TrivialAugment). These runs, including `sparkling-microwave`, experimented with different combinations of Mixup/Cutmix alphas and enablement. Ultimately, none of these variations resulted in a significant improvement over the best score achieved with the `v1` setup (Adam, RandAugment, Mixup alpha=0.2). Consequently, no submissions were made using the `v2` codebase.
