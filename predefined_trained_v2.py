@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 import torchvision
-from torchvision.models import resnet18
+from torchvision.models import resnet18, ResNet18_Weights
 import torchvision.transforms as transforms
 import os
 import numpy as np
@@ -52,8 +52,9 @@ class FeaturePyramidNetwork(nn.Module):
 class EnhancedResNet18(nn.Module):
     def __init__(self, num_classes=100, pretrained=True):
         super(EnhancedResNet18, self).__init__()
-        # Load pretrained ResNet18
-        self.resnet = resnet18(pretrained=pretrained)
+        # Load pretrained ResNet18 with new weights parameter
+        weights = ResNet18_Weights.IMAGENET1K_V1 if pretrained else None
+        self.resnet = resnet18(weights=weights)
         
         # Remove the original FC layer
         self.resnet.fc = nn.Identity()
@@ -669,7 +670,7 @@ def main():
         model = EnhancedResNet18(num_classes=100, pretrained=True)
     else:
         # Fallback to original approach if FPN is disabled
-        model = resnet18(pretrained=True)
+        model = resnet18(weights=ResNet18_Weights.IMAGENET1K_V1)
         num_ftrs = model.fc.in_features
         model.fc = nn.Sequential(
             nn.BatchNorm1d(num_ftrs),
@@ -836,7 +837,7 @@ def main():
     #    Self-Distillation Phase (if enabled)
     ############################################################################
     if CONFIG["use_self_distillation"]:
-        teacher_model = resnet18(pretrained=True)
+        teacher_model = resnet18(weights=ResNet18_Weights.IMAGENET1K_V1)
         num_ftrs = teacher_model.fc.in_features
         teacher_model.fc = nn.Sequential(
             nn.Dropout(0.5),
