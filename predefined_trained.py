@@ -19,6 +19,7 @@ import json
 # for Part 3 you have the option of using a predefined, pretrained network to
 # finetune.
 ################################################################################
+# NOTE: This SimpleCNN is an example definition and is NOT used when CONFIG['model'] is 'ResNet18_pretrained'.
 class SimpleCNN(nn.Module):
     def __init__(self):
         super(SimpleCNN, self).__init__()
@@ -59,7 +60,7 @@ class SimpleCNN(nn.Module):
 # Define a one epoch training function
 ################################################################################
 def train(epoch, model, trainloader, optimizer, criterion, CONFIG):
-    """Train one epoch, e.g. all batches of one epoch."""
+    """Performs one full epoch of training the model on the trainloader dataset."""
     device = CONFIG["device"]
     model.train()  # Set the model to training mode
     running_loss = 0.0
@@ -109,7 +110,7 @@ def train(epoch, model, trainloader, optimizer, criterion, CONFIG):
 # Define a validation function
 ################################################################################
 def validate(model, valloader, criterion, device):
-    """Validate the model"""
+    """Evaluates the model's performance on the validation set."""
     model.eval() # Set to evaluation
     running_loss = 0.0
     correct = 0
@@ -143,6 +144,10 @@ def validate(model, valloader, criterion, device):
 
 # Add a function that mixes up data
 def mixup_data(x, y, alpha=1.0):
+    '''Applies Mixup augmentation to a batch of input data (x) and labels (y).
+    Alpha controls the Beta distribution shape used for mixing ratios.
+    Returns mixed inputs, original labels (y_a), shuffled labels (y_b), and the mixing lambda.
+    '''
     if alpha > 0:
         lam = np.random.beta(alpha, alpha)
     else:
@@ -154,7 +159,9 @@ def mixup_data(x, y, alpha=1.0):
     return mixed_x, y_a, y_b, lam
 
 def cutmix_data(x, y, alpha=1.0):
-    """Apply CutMix augmentation."""
+    """Applies CutMix augmentation. Alpha controls the Beta distribution
+    shape used to determine the cutout patch size. Returns modified inputs,
+    original labels (y_a), shuffled labels (y_b), and the adjusted mixing lambda."""
     if alpha > 0:
         lam = np.random.beta(alpha, alpha)
     else:
@@ -190,9 +197,9 @@ def main():
         "batch_size": 256, # m1 pro: 512, cuda: 512
         "learning_rate": 0.001,
         "backbone_lr": 0.0001,
-        "epochs": 35,  # Train for longer in a real scenario
-        "warmup_epochs": 5, 
-        "num_workers": 4, # Adjust based on your system
+        "epochs": 35,  # Typically requires more epochs for full convergence on complex datasets
+        "warmup_epochs": 5,
+        "num_workers": 4, # Adjust based on available CPU cores/memory for data loading
         "device": "mps" if torch.backends.mps.is_available() else "cuda" if torch.cuda.is_available() else "cpu",
         "data_dir": "./data",  # Make sure this directory exists
         "ood_dir": "./data/ood-test",
@@ -217,7 +224,7 @@ def main():
     transform_train = transforms.Compose([
         transforms.RandomResizedCrop(224),
         transforms.RandomHorizontalFlip(),
-        RandAugment(),
+        RandAugment(), # Applies a set of randomly selected augmentation transformations
         transforms.ToTensor(),
         transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),  # ImageNet normalization
     ])
@@ -262,16 +269,19 @@ def main():
     #   Instantiate model and move to target device
     ############################################################################
     # Instantiate model and load pretrained weights
+    # Using pretrained=True leverages features learned on ImageNet (Transfer Learning)
     model = resnet18(pretrained=True)
 
     num_ftrs = model.fc.in_features
+    # Replace the final fully connected layer to match CIFAR-100's 100 classes
     model.fc = nn.Sequential(
         nn.Dropout(0.5),
         nn.Linear(num_ftrs, 100)
     )
     model = model.to(CONFIG["device"])
 
-    # Freeze the pretrained backbone (all parameters not in fc)
+    # Freeze the pretrained backbone initially.
+    # This allows the new classifier head to adapt without disrupting the learned features.
     for name, param in model.named_parameters():
         if "fc" not in name:
             param.requires_grad = False
@@ -294,11 +304,13 @@ def main():
     ############################################################################
     # Loss Function, Optimizer and optional learning rate scheduler
     ############################################################################
+    # Use CrossEntropyLoss with label smoothing to prevent overconfidence
     criterion = nn.CrossEntropyLoss(label_smoothing=0.05)
     # Initially, only the fc parameters are being optimized.
     optimizer = torch.optim.Adam(model.fc.parameters(), lr=CONFIG["learning_rate"], weight_decay=5e-4)
     
     # We will implement a manual warmup for the classifier.
+    # Helper function to linearly increase learning rate during warmup phase
     def adjust_learning_rate(optimizer, epoch, warmup_epochs, base_lr):
         """Linearly increase lr for the classifier during warmup."""
         lr = base_lr * float(epoch + 1) / warmup_epochs
