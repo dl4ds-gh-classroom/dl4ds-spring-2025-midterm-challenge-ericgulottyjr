@@ -229,7 +229,7 @@ def main():
     ############################################################################
     #   Instantiate model and move to target device
     ############################################################################
-    model = resnet18(pretrained=False)  # Set to True if you want pretrained weights (note the transform changes below)
+    model = resnet18(pretrained=False)  # Set to false since pretrained weights are not used
     # Modify the first convolution of resnet18 to better suit 32x32 inputs
     model.conv1 = nn.Conv2d(3, 64, kernel_size=3, stride=1, padding=1, bias=False)
     # Optionally, remove or adjust the first max pooling layer if needed.
