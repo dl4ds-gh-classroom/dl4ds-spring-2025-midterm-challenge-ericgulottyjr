@@ -12,7 +12,7 @@ from tqdm.auto import tqdm
 import wandb
 import json
 import copy
-from torch.cuda.amp import autocast, GradScaler
+from torch.amp import autocast, GradScaler
 
 ################################################################################
 # Feature Pyramid Network Implementation
@@ -232,8 +232,8 @@ def train(epoch, model, trainloader, optimizer, criterion, CONFIG, l2sp_reg=None
     for i, (inputs, labels) in enumerate(progress_bar):
         inputs, labels = inputs.to(device), labels.to(device)
         
-        # Mixed precision training
-        with autocast(enabled=CONFIG.get("use_mixed_precision", False)):
+        # Mixed precision training with updated autocast
+        with autocast(device_type='cuda' if device == 'cuda' else 'cpu', enabled=CONFIG.get("use_mixed_precision", False)):
             # --- Handle data augmentation ---
             if CONFIG["use_cutmix"] and np.random.random() < 0.5:
                 inputs, targets_a, targets_b, lam = cutmix_data(inputs, labels, alpha=CONFIG["cutmix_alpha"])
@@ -293,6 +293,99 @@ def train(epoch, model, trainloader, optimizer, criterion, CONFIG, l2sp_reg=None
     train_loss = running_loss / len(trainloader)
     train_acc = 100. * correct / total
     return train_loss, train_acc
+
+################################################################################
+# Validation Function with Mixed Precision and TTA Support
+################################################################################
+def validate(model, valloader, criterion, device, CONFIG=None):
+    """Validate the model with optional mixed precision and test-time augmentation."""
+    model.eval()  # Set to evaluation mode
+    running_loss = 0.0
+    correct = 0
+    total = 0
+    
+    # Get TTA settings from CONFIG if available
+    use_tta = CONFIG.get("use_tta", False) if CONFIG else False
+    num_augments = CONFIG.get("tta_num_augments", 5) if CONFIG else 5
+    
+    # Define TTA transforms if enabled
+    if use_tta:
+        tta_transforms = [
+            transforms.Compose([
+                transforms.Resize(256),
+                transforms.CenterCrop(224),
+                transforms.ToTensor(),
+                transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
+            ]),
+            transforms.Compose([
+                transforms.Resize(256),
+                transforms.RandomCrop(224),
+                transforms.ToTensor(),
+                transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
+            ]),
+            transforms.Compose([
+                transforms.Resize(256),
+                transforms.CenterCrop(224),
+                transforms.RandomHorizontalFlip(p=1.0),
+                transforms.ToTensor(),
+                transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225))
+            ])
+        ]
+
+    with torch.no_grad():  # No need to track gradients
+        # Put the valloader iterator in tqdm to print progress
+        progress_bar = tqdm(valloader, desc="[Validate]", leave=False)
+
+        # Iterate through the validation set
+        for i, (inputs, labels) in enumerate(progress_bar):
+            # Move inputs and labels to the target device
+            inputs, labels = inputs.to(device), labels.to(device)
+            
+            # Initialize outputs
+            outputs = None
+            
+            if use_tta:
+                # Original prediction
+                outputs = model(inputs)
+                
+                # Add TTA predictions
+                for j in range(min(num_augments, len(tta_transforms))):
+                    transform = tta_transforms[j]
+                    # Apply transform to each image individually
+                    tta_outputs = []
+                    for k in range(inputs.size(0)):
+                        # Convert tensor to PIL and back
+                        img = transforms.ToPILImage()(inputs[k].cpu())
+                        aug_img = transform(img).unsqueeze(0).to(device)
+                        tta_outputs.append(model(aug_img))
+                    
+                    # Combine TTA outputs
+                    tta_output = torch.cat(tta_outputs, dim=0)
+                    outputs += tta_output
+                
+                # Average predictions
+                outputs /= (num_augments + 1)
+            else:
+                # Regular validation without TTA
+                with autocast(device_type='cuda' if device == 'cuda' else 'cpu', 
+                           enabled=CONFIG.get("use_mixed_precision", False) if CONFIG else False):
+                    outputs = model(inputs)
+                    loss = criterion(outputs, labels)
+                    running_loss += loss.item()
+
+            # Calculate accuracy
+            _, predicted = outputs.max(1)
+            total += labels.size(0)
+            correct += predicted.eq(labels).sum().item()
+
+            progress_bar.set_postfix({
+                "loss": running_loss / (i + 1),
+                "acc": 100. * correct / total
+            })
+
+    val_loss = running_loss / len(valloader)
+    val_acc = 100. * correct / total
+    return val_loss, val_acc
 
 ################################################################################
 # Test Time Augmentation Function
