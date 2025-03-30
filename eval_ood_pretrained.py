@@ -64,9 +64,17 @@ def files_already_downloaded(directory, num_files):
     return True
 
 
-def evaluate_ood_test(model, CONFIG):
+def evaluate_ood_test(model, CONFIG, model_path="best_model.pth"):
     data_dir = CONFIG["ood_dir"]
     device = CONFIG["device"]
+
+    # Load the model state before evaluation
+    if os.path.exists(model_path):
+        print(f"Loading model state for OOD evaluation from: {model_path}")
+        model.load_state_dict(torch.load(model_path, map_location=device))
+        model.to(device)
+    else:
+        print(f"Warning: Model path {model_path} not found. Using the model object as is.")
 
     num_files = 19  # Number of files to download
 
